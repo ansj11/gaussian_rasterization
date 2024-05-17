@@ -17,12 +17,12 @@ namespace cg = cooperative_groups;
 
 // Forward method for converting the input spherical harmonics
 // coefficients of each Gaussian to a simple RGB color.
-__device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, bool* clamped)
+__device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, bool* clamped, const float* viewmatrix)
 {
 	// The implementation is loosely based on code for 
 	// "Differentiable Point-Based Radiance Fields for 
 	// Efficient View Synthesis" by Zhang et al. (2022)
-	glm::vec3 pos = means[idx];
+	glm::vec3 pos = invTransformPoint4x3(means[idx], viewmatrix);
 	glm::vec3 dir = pos - campos;
 	dir = dir / glm::length(dir);
 
@@ -77,9 +77,9 @@ __device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y,
 	// and 31 in "EWA Splatting" (Zwicker et al., 2002). 
 	// Additionally considers aspect / scaling of viewport.
 	// Transposes used to account for row-/column-major conventions.
-	float3 t = transformPoint4x3(mean, viewmatrix);
+	float3 t = mean; //transformPoint4x3(mean, viewmatrix);	// gaussian mean
 
-	const float limx = 1.3f * tan_fovx;
+	const float limx = 1.3f * tan_fovx;  // constrain x*f/z in [-1.3*HW, 1.3*HW] view frustum
 	const float limy = 1.3f * tan_fovy;
 	const float txtz = t.x / t.z;
 	const float tytz = t.y / t.z;
@@ -103,7 +103,7 @@ __device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y,
 		cov3D[1], cov3D[3], cov3D[4],
 		cov3D[2], cov3D[4], cov3D[5]);
 
-	glm::mat3 cov = glm::transpose(T) * glm::transpose(Vrk) * T;
+	glm::mat3 cov = glm::transpose(T) * glm::transpose(Vrk) * T;	// J'W'R'S'SRWJ
 
 	// Apply low-pass filter: every Gaussian should be at least
 	// one pixel wide/high. Discard 3rd row and column.
@@ -140,7 +140,7 @@ __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 r
 	glm::mat3 M = S * R;
 
 	// Compute 3D world covariance matrix Sigma
-	glm::mat3 Sigma = glm::transpose(M) * M;
+	glm::mat3 Sigma = glm::transpose(M) * M;	// R'S'SR
 
 	// Covariance is symmetric, only store upper right
 	cov3D[0] = Sigma[0][0];
@@ -157,7 +157,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	const float* orig_points,
 	const glm::vec3* scales,
 	const float scale_modifier,
-	const glm::vec4* rotations,
+	const glm::vec4* rotations, // points gaussian rotation
 	const float* opacities,
 	const float* shs,
 	bool* clamped,
@@ -190,7 +190,12 @@ __global__ void preprocessCUDA(int P, int D, int M,
 
 	// Perform near culling, quit if outside.
 	float3 p_view;
-	if (!in_frustum(idx, orig_points, viewmatrix, projmatrix, prefiltered, p_view))
+	float w2c[16] = {1.f, 0.f, 0.f, 0.f,
+							  0.f, 1.f, 0.f, 0.f,
+							  0.f, 0.f, 1.f, 0.f,
+							  0.f, 0.f, 0.f, 1.f};
+
+	if (!in_frustum(idx, orig_points, w2c, projmatrix, prefiltered, p_view))
 		return;
 
 	// Transform point by projecting
@@ -240,7 +245,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	// spherical harmonics coefficients to RGB color.
 	if (colors_precomp == nullptr)
 	{
-		glm::vec3 result = computeColorFromSH(idx, D, M, (glm::vec3*)orig_points, *cam_pos, shs, clamped);
+		glm::vec3 result = computeColorFromSH(idx, D, M, (glm::vec3*)orig_points, *cam_pos, shs, clamped, viewmatrix);
 		rgb[idx * C + 0] = result.x;
 		rgb[idx * C + 1] = result.y;
 		rgb[idx * C + 2] = result.z;

@@ -19,7 +19,7 @@
 #define NUM_WARPS (BLOCK_SIZE/32)
 
 // Spherical harmonics coefficients
-__device__ const float SH_C0 = 0.28209479177387814f;
+__device__ const float SH_C0 = 0.28209479177387814f;	// 1/(2sqrt(np.pi))
 __device__ const float SH_C1 = 0.4886025119029199f;
 __device__ const float SH_C2[] = {
 	1.0925484305920792f,
@@ -61,6 +61,18 @@ __forceinline__ __device__ float3 transformPoint4x3(const float3& p, const float
 		matrix[0] * p.x + matrix[4] * p.y + matrix[8] * p.z + matrix[12],
 		matrix[1] * p.x + matrix[5] * p.y + matrix[9] * p.z + matrix[13],
 		matrix[2] * p.x + matrix[6] * p.y + matrix[10] * p.z + matrix[14],
+	};
+	return transformed;
+}
+
+
+__forceinline__ __device__ glm::vec3 invTransformPoint4x3(const glm::vec3& p, const float* matrix)
+{
+	
+	glm::vec3 transformed = {
+		matrix[0] * (p.x - matrix[12]) + matrix[1] * (p.y - matrix[13]) + matrix[2] * (p.z - matrix[14]),
+		matrix[4] * (p.x - matrix[12]) + matrix[5] * (p.y - matrix[13]) + matrix[6] * (p.z - matrix[14]),
+		matrix[8] * (p.x - matrix[12]) + matrix[9] * (p.y - matrix[13]) + matrix[10] * (p.z - matrix[14]),
 	};
 	return transformed;
 }
